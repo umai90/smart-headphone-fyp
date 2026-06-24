@@ -1,0 +1,22 @@
+[Unit]
+Description=Smart Headphone LCD Touchscreen Controller
+After=smart-headphone-api.service
+Wants=smart-headphone-api.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/FYP_project/lcd_ui
+# Wait for Flask to be fully up before opening the UI
+ExecStartPre=/bin/sleep 4
+ExecStart=/usr/bin/python3 /home/pi/FYP_project/lcd_ui/app.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/smart-headphone-lcd.log
+StandardError=append:/var/log/smart-headphone-lcd.err
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+SupplementaryGroups=video tty input audio
+
+[Install]
+WantedBy=multi-user.target

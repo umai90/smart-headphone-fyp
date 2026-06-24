@@ -1,0 +1,48 @@
+# Smart Headphone Translation System
+# Install all dependencies:
+#   py -m pip install -r requirements.txt
+
+# ── Audio recording & processing ─────────────────────────
+sounddevice
+numpy
+
+# ── Offline STT (Vosk for English, Whisper for Urdu) ─────
+# Vosk model folder needed:
+#   English: vosk-model-small-en-us  (https://alphacephei.com/vosk/models)
+# Note: No Vosk model exists for Urdu — Whisper is used instead (auto-downloads on first run).
+vosk
+openai-whisper
+
+# ── Offline Translation (Argostranslate) ─────────────────
+# Run "Setup Offline Packages" from main menu once (needs internet once).
+argostranslate
+
+# ── Offline TTS ──────────────────────────────────────────
+pyttsx3
+
+# ── Online STT (Google via SpeechRecognition) ────────────
+SpeechRecognition
+# webrtcvad enables automatic speech start/stop detection (no fixed 7 s wait).
+# On Raspberry Pi OS: sudo apt install gcc python3-dev  — then pip install below.
+webrtcvad
+
+# ── Online Translation ────────────────────────────────────
+deep-translator
+
+# ── Online TTS ───────────────────────────────────────────
+gTTS
+pygame-ce
+
+# ── Flask API (for Android app) ──────────────────────────
+flask
+flask-cors
+
+# ── Deepfake Voice Detection ──────────────────────────────
+librosa
+joblib
+scikit-learn
+matplotlib
+
+# ── Cloud Backup (Google Drive) ───────────────────────────
+# One-time setup: py cloud_backup.py setup
+pydrive2

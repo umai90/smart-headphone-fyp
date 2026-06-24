@@ -1,0 +1,92 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+
+# ─── Claude Code internal files ───────────────────────────────────────────────
+.claude/
+settings.local.json
+
+# ─── Credentials & secrets ────────────────────────────────────────────────────
+mycreds.txt
+client_secrets.json
+*.credentials.json
+firebase_credentials.json
+.env
+*.key
+
+# ─── Vosk offline ASR model (download separately — ~70 MB) ───────────────────
+translate/vosk-model-small-en-us/
+
+# ─── User session recordings ──────────────────────────────────────────────────
+translate/recordings/
+
+# ─── Logs & error files ───────────────────────────────────────────────────────
+*.log
+*.err
+*.log.err
+
+# ─── Generated diagrams ───────────────────────────────────────────────────────
+translate/system_diagram.txt
+translate/system_diagram.png
+translate/system_diagram_preview.png
+
+# ─── Trained ML model binaries (train locally with train_multi_model.py) ──────
+module-1/deepfake_detection/models/
+module-1/deepfake_detection/catboost_info/
+
+# ─── Training data (ASVspoof 2019 dataset — download separately) ──────────────
+module-1/deepfake_detection/data/
+module-1/deepfake_detection/feature_cache/
+module-1/deepfake_detection/_librispeech_tmp/
+
+# ─── Pre-extracted feature matrices ───────────────────────────────────────────
+module-1/deepfake_detection/X_features.npy
+module-1/deepfake_detection/y_labels.npy
+
+# ─── PDF build/draft scripts (not project source) ─────────────────────────────
+fix_all_links_final.py
+fix_pdf_links.py
+generate_latex_pdf.py
+generate_research_pdf.py
+inspect_pdf.py
+patch_paper_v2.py
+rebuild_paper.py
+update_paper_content.py
+pdf_content.txt
+
+# ─── Root-level PDFs, TeX drafts (canonical versions are in docs/) ─────────────
+*.pdf
+*.tex
+GKpnin.pdf
+
+# ─── Flutter build artifacts ──────────────────────────────────────────────────
+Application/frontend/smart_headphone_app/build/
+Application/frontend/smart_headphone_app/.dart_tool/
+Application/frontend/smart_headphone_app/android/.gradle/
+Application/frontend/smart_headphone_app/.idea/
+Application/frontend/smart_headphone_app/*.iml
+Application/frontend/.claude/
+
+# ─── IDE & OS ─────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ─── Docs folder: allow PDFs explicitly ───────────────────────────────────────
+!docs/
+!docs/*.pdf
+!docs/*.tex
