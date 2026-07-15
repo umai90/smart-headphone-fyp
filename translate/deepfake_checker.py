@@ -58,19 +58,25 @@ def _pkl_mtime_max() -> float:
     return max(mtimes) if mtimes else 0.0
 
 # Excluded 2026-07-14 after an out-of-distribution accuracy audit: the training
-# set's REAL class is 100% LibriSpeech (clean studio audiobook recordings), so
-# these 5 tree/boosting models learned "sounds like LibriSpeech" rather than
-# genuine acoustic naturalness. On data/test/'s hand-recorded real-audio samples
-# (never seen in training) they scored 61-64% avg fake-probability — confidently
-# WRONG — while the remaining 5 (margin-based/smooth models) scored 0.5-7.4% on
-# the same files and still caught both labeled clone samples at 99%+ confidence.
-# Their in-distribution held-out test_accuracy in model_results.json (~99%+) is
-# from the SAME narrow LibriSpeech-vs-TTS split and does not reflect this. Only
-# re-include after retraining with more diverse real-audio recording conditions
-# (device/room/format variety, not just LibriSpeech) or explicit probability
-# recalibration (e.g. CalibratedClassifierCV).
+# set's REAL class was 100% LibriSpeech (clean studio audiobook recordings), so
+# 5 tree/boosting models learned "sounds like LibriSpeech" rather than genuine
+# acoustic naturalness, scoring 61-64% avg fake-probability (confidently WRONG)
+# on hand-recorded real-audio samples never seen in training.
+#
+# 2026-07-15: retrained with the REAL class expanded to include 63 real
+# mic-captured recordings (from actual live app usage, not just LibriSpeech)
+# plus strengthened mic-domain augmentation (multi-tap room reverb, varied
+# SNR noise, mic frequency coloration, gain jitter — see preprocess.py
+# _mic_simulation). Re-audited all 10 models against 13 held-out real mic
+# recordings never used in training (audit_models.py / audit_results.json):
+#   adaboost            38.6% avg fake-prob on real  <- still wrong, stays excluded
+#   extra_trees         17.8%  |  random_forest 16.6%  |  catboost  2.3%  <- now fine
+#   (gradient_boosting 4.8%, and the previously-active 5 all stayed <13%)
+# Only AdaBoost still misjudges out-of-distribution real audio; the other 4
+# previously-excluded models are re-included. Re-run this audit after any
+# future retrain — the exclusion set is a measured result, not a fixed rule.
 _EXCLUDED_MODELS: set = {
-    "random_forest", "gradient_boosting", "extra_trees", "adaboost", "catboost",
+    "adaboost",
 }
 
 

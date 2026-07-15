@@ -47,14 +47,17 @@ HIGH_CONF_THRESHOLD = 60.0
 
 _cache: dict = {}
 
-# Excluded 2026-07-14 after an out-of-distribution accuracy audit — see the
-# matching comment in translate/deepfake_checker.py (the production copy) for
-# the full analysis. Short version: these 5 tree/boosting models learned
-# "sounds like LibriSpeech" (the training set's only REAL source) rather than
-# genuine acoustic naturalness, and confidently misclassify real audio recorded
-# under any other condition. Keep this set in sync with translate/deepfake_checker.py.
+# Excluded 2026-07-14, narrowed 2026-07-15 after retraining with diverse
+# real mic-captured audio (not just LibriSpeech) — see the matching comment
+# in translate/deepfake_checker.py (the production copy) for the full
+# analysis. Only AdaBoost still shows elevated fake-probability (38.6% avg)
+# on held-out real mic recordings never seen in training; every other
+# previously-excluded model (random_forest, extra_trees, gradient_boosting,
+# catboost) now generalizes well (2-18% avg fake-prob on the same held-out
+# set) and has been re-included. Keep this set in sync with
+# translate/deepfake_checker.py.
 _EXCLUDED_MODELS: set = {
-    "random_forest", "gradient_boosting", "extra_trees", "adaboost", "catboost",
+    "adaboost",
 }
 
 # ── Feature extraction (206-dim, same as preprocess.py) ───────────────────────
