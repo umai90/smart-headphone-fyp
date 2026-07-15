@@ -434,9 +434,9 @@ class DeepfakeWindow:
             ok, data = _post(f'/detect_recording/{name}')
             if ok and 'label' in data:
                 verdict = data['label']
-                conf    = int(data.get('confidence', 0) * 100)
-                real_p  = int(data.get('real_prob',  0) * 100)
-                fake_p  = int(data.get('fake_prob',  0) * 100)
+                conf    = int(data.get('confidence', 0))
+                real_p  = int(data.get('real_prob',  0))
+                fake_p  = int(data.get('fake_prob',  0))
                 msg   = f"{verdict}   {conf}% confidence   (Real {real_p}%  /  Fake {fake_p}%)"
                 color = RED if verdict == 'FAKE' else GREEN
             else:

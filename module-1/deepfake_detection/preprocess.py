@@ -15,8 +15,8 @@ _REAL_DIR = os.path.join(_HERE, "data", "real")
 SR     = 16000
 N_MFCC = 40
 
-FAKE_AUGMENT_COUNT = 7
-REAL_AUGMENT_COUNT = 3
+FAKE_AUGMENT_COUNT = 3
+REAL_AUGMENT_COUNT = 5
 
 
 # ── Augmentation helpers ───────────────────────────────────────────────────────
@@ -47,13 +47,53 @@ def _time_stretch(y, rate):
         return y
 
 
-def _mic_simulation(y, sr):
-    y_noisy = _add_noise(y, snr_db=25)
-    delay_samples = int(sr * 0.015)
-    if delay_samples < len(y_noisy):
-        echo = np.zeros_like(y_noisy)
-        echo[delay_samples:] = y_noisy[:-delay_samples] * 0.08
-        y_noisy = np.clip(y_noisy + echo, -1.0, 1.0)
+def _bandpass_coloration(y, sr):
+    """Rough approximation of cheap-mic frequency response: roll off
+    highs above ~7kHz and lows below ~100Hz, the way a laptop/USB mic
+    capsule (vs. studio audiobook capture) typically does."""
+    try:
+        import scipy.signal as _sig
+        sos = _sig.butter(2, [100, 7000], btype="bandpass", fs=sr, output="sos")
+        return _sig.sosfilt(sos, y).astype(np.float32)
+    except Exception:
+        return y
+
+
+def _room_reverb(y, sr, decay=0.35, taps=6, spread_ms=80):
+    """Synthetic room reverb: a handful of decaying, randomly-spaced echo
+    taps rather than one fixed 15ms/8% tap — approximates real room
+    reflections instead of a single clean delay line."""
+    out = y.copy()
+    max_delay = int(sr * spread_ms / 1000)
+    for i in range(taps):
+        delay_samples = np.random.randint(int(sr * 0.005), max(int(sr * 0.005) + 1, max_delay))
+        amp = decay * (0.6 ** i) * np.random.uniform(0.5, 1.0)
+        if delay_samples < len(out):
+            echo = np.zeros_like(out)
+            echo[delay_samples:] = y[:-delay_samples] * amp
+            out = out + echo
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
+
+
+def _mic_simulation(y, sr, variant=0):
+    """Simulate a real microphone-capture chain (laptop/USB mic, room
+    acoustics, ambient noise) instead of the clean single-speaker studio
+    audiobook conditions the REAL class otherwise only ever sees.
+    `variant` selects a different noise/reverb/coloration profile so
+    REAL_AUGMENT_COUNT calls produce genuinely different conditions
+    rather than repeating the same mild transform with only RNG noise
+    differing."""
+    snr_choices = [10, 15, 20, 28]
+    snr_db = snr_choices[variant % len(snr_choices)]
+    y_noisy = _add_noise(y, snr_db=snr_db)
+    y_noisy = _room_reverb(y_noisy, sr,
+                            decay=0.25 + 0.1 * (variant % 3),
+                            taps=4 + (variant % 4))
+    if variant % 2 == 0:
+        y_noisy = _bandpass_coloration(y_noisy, sr)
+    # Slight gain jitter — mimics AGC / mic sensitivity variation.
+    gain = np.random.uniform(0.7, 1.15)
+    y_noisy = np.clip(y_noisy * gain, -1.0, 1.0)
     return y_noisy.astype(np.float32)
 
 
@@ -77,9 +117,9 @@ def get_augmented_variants(y, sr, label):
             except Exception:
                 pass
     else:
-        for _ in range(REAL_AUGMENT_COUNT):
+        for i in range(REAL_AUGMENT_COUNT):
             try:
-                variants.append(_mic_simulation(y, sr))
+                variants.append(_mic_simulation(y, sr, variant=i))
             except Exception:
                 pass
     return variants

@@ -662,9 +662,9 @@ class DeepfakeScreen(Screen):
                 tst = f['xs'].render('Testing...', True, AMBER)
                 surf.blit(tst, (row_w - tst.get_width() + 4, y + 18))
             elif res:
-                if 'verdict' in res:
-                    verdict = res['verdict']
-                    conf    = int(res.get('confidence', 0) * 100)
+                if 'label' in res:
+                    verdict = res['label']
+                    conf    = int(res.get('confidence', 0))
                     color   = RED if verdict == 'FAKE' else GREEN
                     vs = f['sm'].render(f"{verdict} {conf}%", True, color)
                     surf.blit(vs, (row_w - vs.get_width() + 4, y + 14))

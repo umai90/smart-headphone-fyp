@@ -56,30 +56,46 @@ class TranslationProvider extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _loadPrefs();
-    await _ttsService.init(
-      rate: _ttsRate,
-      pitch: _ttsPitch,
-      onStart: () {
-        _isSpeaking = true;
-        notifyListeners();
-      },
-      onComplete: () {
-        _isSpeaking = false;
-        notifyListeners();
-      },
-    );
-
-    final status = await Permission.microphone.request();
-    if (status.isGranted) {
-      _speechAvailable = await _speech.initialize(
-        onError: (e) => _setError(e.errorMsg),
+    // Plugin setup below must not block app startup: if TTS, permission, or
+    // speech-recognition plugins fail to initialize (missing platform
+    // support, first-run edge cases), the splash screen should still
+    // navigate through rather than hang on "Initializing..." forever.
+    try {
+      await _ttsService.init(
+        rate: _ttsRate,
+        pitch: _ttsPitch,
+        onStart: () {
+          _isSpeaking = true;
+          notifyListeners();
+        },
+        onComplete: () {
+          _isSpeaking = false;
+          notifyListeners();
+        },
       );
-    }
+    } catch (_) {}
+
+    try {
+      final status = await Permission.microphone.request();
+      if (status.isGranted) {
+        _speechAvailable = await _speech.initialize(
+          onError: (e) => _setError(e.errorMsg),
+        );
+      }
+    } catch (_) {}
     notifyListeners();
   }
 
   Future<void> _loadPrefs() async {
-    final p = await SharedPreferences.getInstance();
+    // If the SharedPreferences platform channel is unavailable for any reason,
+    // fall back to the field defaults already declared above rather than
+    // leaving _bootstrap() (and the splash screen) hanging forever.
+    final SharedPreferences p;
+    try {
+      p = await SharedPreferences.getInstance();
+    } catch (_) {
+      return;
+    }
     _ttsRate = p.getDouble('ttsRate') ?? 0.5;
     _ttsPitch = p.getDouble('ttsPitch') ?? 1.0;
     _autoSpeak = p.getBool('autoSpeak') ?? true;

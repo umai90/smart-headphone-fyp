@@ -57,11 +57,21 @@ def _pkl_mtime_max() -> float:
     mtimes = [os.path.getmtime(p) for p in glob.glob(os.path.join(_MODEL_DIR, "*.pkl"))]
     return max(mtimes) if mtimes else 0.0
 
-# All models are included after retraining on a perfectly balanced dataset
-# (900 real / 900 fake).  Previous exclusions were based on unbalanced training:
-#   random_forest 99.03%, extra_trees 99.58%, adaboost 98.33%, knn 97.78%
-# — all now acceptable for ensemble voting.
-_EXCLUDED_MODELS: set = set()
+# Excluded 2026-07-14 after an out-of-distribution accuracy audit: the training
+# set's REAL class is 100% LibriSpeech (clean studio audiobook recordings), so
+# these 5 tree/boosting models learned "sounds like LibriSpeech" rather than
+# genuine acoustic naturalness. On data/test/'s hand-recorded real-audio samples
+# (never seen in training) they scored 61-64% avg fake-probability — confidently
+# WRONG — while the remaining 5 (margin-based/smooth models) scored 0.5-7.4% on
+# the same files and still caught both labeled clone samples at 99%+ confidence.
+# Their in-distribution held-out test_accuracy in model_results.json (~99%+) is
+# from the SAME narrow LibriSpeech-vs-TTS split and does not reflect this. Only
+# re-include after retraining with more diverse real-audio recording conditions
+# (device/room/format variety, not just LibriSpeech) or explicit probability
+# recalibration (e.g. CalibratedClassifierCV).
+_EXCLUDED_MODELS: set = {
+    "random_forest", "gradient_boosting", "extra_trees", "adaboost", "catboost",
+}
 
 
 # ── Model weights from training results ───────────────────────────────────────

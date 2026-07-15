@@ -44,10 +44,22 @@ MODEL_FILES = {
     "CatBoost":          ["catboost_model.pkl"],
 }
 
-# ── Feature extraction — uses preprocess.py (164-dim, matches trained models) ──
+# ── Feature extraction — uses preprocess.py (206-dim, matches trained models) ──
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from preprocess import extract_features
+from deepfake_checker import _EXCLUDED_MODELS as _PRODUCTION_EXCLUDED
+
+# Map this script's MODEL_FILES keys to deepfake_checker.py's lowercase names
+# (derived from its pkl filename stems) so exclusions stay in sync automatically
+# instead of duplicating the list a third time.
+_NAME_TO_CHECKER_KEY = {
+    "SVM_RBF": "svm_rbf", "SVM_Linear": "svm_linear",
+    "Random_Forest": "random_forest", "Grad_Boosting": "gradient_boosting",
+    "Extra_Trees": "extra_trees", "AdaBoost": "adaboost",
+    "Logistic_Reg": "logistic_regression", "KNN": "knn",
+    "MLP": "mlp", "CatBoost": "catboost",
+}
 
 # ── Model loader ───────────────────────────────────────────────────────────────
 def load_assets():
@@ -60,6 +72,8 @@ def load_assets():
 
     models = {}
     for name, filenames in MODEL_FILES.items():
+        if _NAME_TO_CHECKER_KEY.get(name) in _PRODUCTION_EXCLUDED:
+            continue
         for fn in filenames:
             p = os.path.join(_MODEL_DIR, fn)
             if os.path.exists(p):
@@ -100,7 +114,7 @@ print("=" * 80)
 print(f"  Test folder : {TEST_DIR}")
 print(f"  Model dir   : {_MODEL_DIR}")
 print(f"  Per-model threshold : fake_prob >= {FAKE_THRESHOLD*100:.0f}%")
-print(f"  Ensemble threshold  : >= {FAKE_VOTE_THRESHOLD} model votes → FAKE")
+print(f"  Ensemble threshold  : >= {FAKE_VOTE_THRESHOLD} model votes -> FAKE")
 
 if not os.path.isdir(TEST_DIR):
     print(f"\n[ERROR] Test folder not found: {TEST_DIR}")

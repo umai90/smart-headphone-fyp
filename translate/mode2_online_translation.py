@@ -461,7 +461,7 @@ def _listen_vad(source_lang='en', fallback_to_text=True):
                         break
 
     except Exception as e:
-        print(f"[MIC-VAD] Stream error: {e}  → falling back to fixed recording")
+        print(f"[MIC-VAD] Stream error: {e}  -> falling back to fixed recording")
         return _listen_fixed(source_lang, fallback_to_text)
 
     if not accumulated:
@@ -819,6 +819,13 @@ def start_flask_api():
             from conversation_recorder import ConversationRecorder
             recorder = ConversationRecorder()
             recorder.start(f'Pi-1Way-{from_lang}-{to_lang}')
+            if mode == 'offline':
+                # argostranslate's first call in a process lazily loads its
+                # translation model (~5-8s) — pay that cost once now instead
+                # of during the first real listen/translate cycle.
+                from mode1_offline_translation import _warm_up_translation
+                d = 'en_to_ur' if (from_lang == 'en' or to_lang == 'ur') else 'ur_to_en'
+                _warm_up_translation(d)
             _pi_set(state='listening')
             try:
                 while not stop_ev.is_set():
@@ -865,6 +872,9 @@ def start_flask_api():
             from conversation_recorder import ConversationRecorder
             recorder = ConversationRecorder()
             recorder.start(f'Pi-2Way-{lang_a}-{lang_b}')
+            if mode == 'offline':
+                from mode1_offline_translation import _warm_up_translation
+                _warm_up_translation('en_to_ur', 'ur_to_en')
             turn = 'A'
             _pi_set(state='listening')
             try:

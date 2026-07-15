@@ -56,17 +56,32 @@ pip3 install --break-system-packages --quiet \
     pygame-ce \
     sounddevice \
     vosk \
-    openai-whisper \
+    faster-whisper \
     argostranslate \
     pyttsx3 \
-    librosa \
-    scikit-learn \
     joblib \
     matplotlib \
     pydrive2 \
     webrtcvad \
     evdev \
     2>&1 | grep -v "^$" || true
+
+# numpy/scipy/librosa/soundfile pinned to match the training environment exactly
+# (see translate/requirements.txt), installed before scikit-learn so it builds
+# against this exact numpy. NOTE: this script also apt-installs python3-numpy /
+# python3-scipy above (system packages) which can shadow these pinned pip
+# versions — setup_pi.sh (the actually-used deploy path) does not do this.
+info "Installing pinned numpy/scipy/librosa/soundfile (must precede scikit-learn build)..."
+pip3 install --break-system-packages --no-cache-dir --timeout 300 \
+    'numpy==2.4.6' 'scipy==1.17.1' 'soundfile==0.13.1' 'librosa==0.11.0'
+
+# scikit-learn MUST be compiled from source on ARM64/Python 3.13 and pinned to
+# match the training environment: PyPI pre-built wheels cause a Bus error from
+# ABI mismatch with the numpy build on this platform, and an unpinned/mismatched
+# version risks failing to unpickle models trained with a different scikit-learn.
+# Keep this version in sync with translate/requirements.txt (the training-side pin).
+info "Compiling scikit-learn from source (this takes ~30 min on Pi)..."
+pip3 install --break-system-packages --no-cache-dir --no-binary scikit-learn 'scikit-learn==1.8.0'
 info "Python packages installed."
 
 # ─────────────────────────── 3. SPI TFT Display ──────────────────────────────

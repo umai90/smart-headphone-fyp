@@ -26,11 +26,10 @@ except FileNotFoundError as e:
     print("Run train_multi_model.py first.")
     sys.exit(1)
 
-# Default: scan both Fake/ and Real/ folders side-by-side
-_ROOT = os.path.join(_HERE, "..")
+# Default: scan the data/fake and data/real folders side-by-side
 SCAN_FOLDERS = [
-    (os.path.join(_ROOT, "Fake"), "FAKE"),
-    (os.path.join(_ROOT, "Real"), "REAL"),
+    (os.path.join(_HERE, "data", "fake"), "FAKE"),
+    (os.path.join(_HERE, "data", "real"), "REAL"),
 ]
 if len(sys.argv) > 1:
     SCAN_FOLDERS = [(sys.argv[1], "?")]

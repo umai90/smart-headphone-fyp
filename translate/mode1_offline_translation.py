@@ -4,7 +4,7 @@ Smart Headphone Translation System
 ------------------------------------------------------------
 100% Offline — No internet needed after first setup
 Languages : English <-> Urdu
-STT       : vosk (English), openai-whisper (Urdu)
+STT       : vosk (English), faster-whisper (Urdu, CPU-only)
 Translate : argostranslate (offline neural)
 TTS       : espeak-ng (Urdu), pyttsx3 (English)
 """
@@ -33,6 +33,16 @@ except ImportError:
 # Suppress Vosk's verbose LOG lines in the terminal
 os.environ.setdefault("VOSK_LOG_LEVEL", "-1")
 
+# Force argostranslate to use its lightweight MINISBD sentence-splitter instead
+# of stanza. Deployments that install argostranslate+stanza with --no-deps
+# (e.g. lcd_ui/setup_pi.sh, to avoid pulling in torch on ARM64) end up with a
+# stanza that can't actually import (it hard-requires torch), which makes
+# argostranslate's sentence-boundary-detection silently fail with
+# "'NoneType' object has no attribute 'Pipeline'" and fall back to the tiny
+# ~65-phrase hardcoded dictionary for every translation. MINISBD is already an
+# installed argostranslate dependency and doesn't need stanza/torch at all.
+os.environ.setdefault("ARGOS_CHUNK_TYPE", "MINISBD")
+
 # Fix Windows console so Urdu characters don't crash the output
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf-8-sig'):
     try:
@@ -52,14 +62,14 @@ except ImportError:
     VOSK_AVAILABLE = False
     print("[WARNING] vosk not installed. Run: py -m pip install vosk")
 
-# ─── Whisper ─────────────────────────────────────────────────────────────────
+# ─── Whisper (faster-whisper — CPU-friendly, no torch/CUDA) ──────────────────
 try:
-    import whisper as openai_whisper
+    from faster_whisper import WhisperModel as _FasterWhisperModel
     WHISPER_AVAILABLE = True
-    print("[OK] openai-whisper loaded")
+    print("[OK] faster-whisper loaded")
 except ImportError:
     WHISPER_AVAILABLE = False
-    print("[WARNING] openai-whisper not installed. Run: py -m pip install openai-whisper")
+    print("[WARNING] faster-whisper not installed. Run: pip install faster-whisper")
 
 # ─── Argos Translate ─────────────────────────────────────────────────────────
 try:
@@ -239,12 +249,12 @@ def setup_offline_translation():
             print(f"[SETUP ERROR] {e}")
             success = False
 
-    # Also download Whisper model if not cached (needed for Urdu STT offline)
+    # Also download faster-whisper model if not cached (needed for Urdu STT offline)
     if WHISPER_AVAILABLE:
         if not _whisper_model_cached():
-            print("[SETUP] Downloading Whisper 'small' model (~460 MB, one-time only)...")
+            print("[SETUP] Downloading faster-whisper 'small' model (~460 MB, one-time only)...")
             try:
-                model = openai_whisper.load_model("small")
+                model = _FasterWhisperModel("small", device="cpu", compute_type="int8")
                 _whisper_model_cache["small"] = model
                 print("[SETUP] Whisper model downloaded and cached.")
             except Exception as e:
@@ -253,7 +263,7 @@ def setup_offline_translation():
         else:
             print("[SETUP] Whisper model already cached.")
     else:
-        print("[SETUP] openai-whisper not installed — skipping Whisper model download.")
+        print("[SETUP] faster-whisper not installed — skipping Whisper model download.")
 
     if success:
         print("\n[SETUP DONE] Offline translation ready!")
@@ -663,21 +673,20 @@ def _load_vosk_model():
 
 
 def _whisper_model_cached():
-    """Return True only if the Whisper 'small' model is already on disk (no download needed)."""
-    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
-    model_file = os.path.join(cache_dir, "small.pt")
-    return os.path.exists(model_file)
+    """Return True if the faster-whisper 'small' model is already on disk."""
+    model_dir = os.path.join(
+        os.path.expanduser("~"), ".cache", "huggingface", "hub",
+        "models--Systran--faster-whisper-small"
+    )
+    return os.path.isdir(model_dir)
 
 
 def _load_whisper_model():
     if "small" in _whisper_model_cache:
         return _whisper_model_cache["small"]
-    if not _whisper_model_cached():
-        print("[STT] Whisper model not found locally. Run option 6 (Setup) with internet to download it once.")
-        return None
-    print("[STT] Loading Whisper model from cache...")
+    print("[STT] Loading faster-whisper model (downloads on first use)...")
     try:
-        model = openai_whisper.load_model("small")
+        model = _FasterWhisperModel("small", device="cpu", compute_type="int8")
         _whisper_model_cache["small"] = model
         print("[STT] Whisper model ready.")
         return model
@@ -747,12 +756,12 @@ def _stt_vosk():
 
 
 def _stt_whisper():
-    """Urdu speech-to-text using Whisper — offline after first download.
+    """Urdu speech-to-text using faster-whisper — offline after first model download.
     Returns (text, audio_data, samplerate).
     audio_data is the raw int16 PCM that was recorded (or None on failure).
     """
     if not WHISPER_AVAILABLE:
-        print("[ERROR] openai-whisper not installed. Run: py -m pip install openai-whisper")
+        print("[ERROR] faster-whisper not installed. Run: pip install faster-whisper")
         return _text_fallback_offline("ur"), None, 16000
 
     audio, samplerate = listen_offline(duration=6, target_samplerate=16000)
@@ -765,8 +774,8 @@ def _stt_whisper():
             return _text_fallback_offline("ur"), audio, samplerate
 
         audio_float = audio.astype(np.float32) / 32768.0
-        result = model.transcribe(audio_float, language="ur")
-        text = result.get("text", "").strip()
+        segments, _ = model.transcribe(audio_float, language="ur")
+        text = " ".join([s.text for s in segments]).strip()
         if text:
             safe_print(f"[HEARD] {text}")
             return text, audio, samplerate
@@ -814,16 +823,18 @@ def full_offline_pipeline(direction="en_to_ur", recorder=None):
         print("[2/3] WARN: Translation not available for this phrase.")
         print("            Use option 6 from the main menu to set up offline packs.")
 
+    # Save the recording as soon as we have a transcript + translation, not
+    # after TTS — a slow/failed/interrupted speak_offline() call must not
+    # lose audio that was already successfully recognized and translated.
+    if recorder:
+        recorder.log("AUTO", src_lang, text, output_lang, translated,
+                     audio_data=audio, samplerate=samplerate)
+
     # ── STEP 3: Speak ────────────────────────────────────────
     print(f"\n[3/3] Speaking...")
     safe_print(f"      Original   ({src_lang.upper()}): {text}")
     safe_print(f"      Translated ({output_lang.upper()}): {translated}")
     speak_offline(translated, lang=output_lang)
-
-    # ── Record ───────────────────────────────────────────────
-    if recorder:
-        recorder.log("AUTO", src_lang, text, output_lang, translated,
-                     audio_data=audio, samplerate=samplerate)
 
     print("[3/3] DONE\n")
     return translated
@@ -832,6 +843,22 @@ def full_offline_pipeline(direction="en_to_ur", recorder=None):
 # ═════════════════════════════════════════
 #  LIVE MIC LOOP
 # ═════════════════════════════════════════
+
+def _warm_up_translation(*directions):
+    """
+    argostranslate's first call in a process lazily loads its translation
+    model (~5-8s, no progress output) — without this warning it looks like
+    the pipeline is frozen. Pay that cost once, up front, with a visible
+    message, instead of silently during the user's first live translation.
+    """
+    print("[SETUP] Loading offline translation engine (first use, a few seconds)...")
+    for d in directions:
+        try:
+            offline_translate("hello", direction=d)
+        except Exception:
+            pass
+    print("[SETUP] Ready.")
+
 
 def live_offline_mode(recorder=None):
     """Continuous loop — Ctrl+C to stop."""
@@ -851,6 +878,7 @@ def live_offline_mode(recorder=None):
         return
     direction = "en_to_ur" if d == "1" else "ur_to_en"
     label     = "English -> Urdu" if direction == "en_to_ur" else "Urdu -> English"
+    _warm_up_translation(direction)
     print(f"\n[SET] {label} | Press Ctrl+C to stop.\n")
     while True:
         try:
@@ -883,6 +911,7 @@ def demo_offline(recorder=None):
     direction   = "en_to_ur" if d == "1" else "ur_to_en"
     src_lang    = "en" if direction == "en_to_ur" else "ur"
     output_lang = "ur" if direction == "en_to_ur" else "en"
+    _warm_up_translation(direction)
 
     print("\nType text and press Enter. Type 'exit' to quit.\n")
     while True:
@@ -926,6 +955,8 @@ def two_way_conversation_offline(recorder=None):
     else:
         print("[OK] Offline translation packages ready.")
 
+    _warm_up_translation("en_to_ur", "ur_to_en")
+
     print("\n[SET] Person A speaks English  |  Person B speaks Urdu")
     print("Conversation starts now. Press Ctrl+C to stop.\n")
 
@@ -941,10 +972,10 @@ def two_way_conversation_offline(recorder=None):
                     translated = offline_translate(text, direction="en_to_ur")
                     safe_print(f"[Person A | EN]: {text}")
                     safe_print(f"[-> UR]        : {translated}")
-                    speak_offline(translated, lang="ur")
                     if recorder:
                         recorder.log("Person A", "en", text, "ur", translated,
                                      audio_data=audio, samplerate=samplerate)
+                    speak_offline(translated, lang="ur")
                 elif audio is not None and recorder:
                     recorder.log("Person A", "en", '', "ur", '',
                                  audio_data=audio, samplerate=samplerate)
@@ -958,10 +989,10 @@ def two_way_conversation_offline(recorder=None):
                     translated = offline_translate(text, direction="ur_to_en")
                     safe_print(f"[Person B | UR]: {text}")
                     safe_print(f"[-> EN]        : {translated}")
-                    speak_offline(translated, lang="en")
                     if recorder:
                         recorder.log("Person B", "ur", text, "en", translated,
                                      audio_data=audio, samplerate=samplerate)
+                    speak_offline(translated, lang="en")
                 elif audio is not None and recorder:
                     recorder.log("Person B", "ur", '', "en", '',
                                  audio_data=audio, samplerate=samplerate)

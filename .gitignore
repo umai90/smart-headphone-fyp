@@ -54,6 +54,11 @@ module-1/deepfake_detection/_librispeech_tmp/
 # ─── Pre-extracted feature matrices ───────────────────────────────────────────
 module-1/deepfake_detection/X_features.npy
 module-1/deepfake_detection/y_labels.npy
+module-1/deepfake_detection/*_old_backup.npy
+module-1/deepfake_detection/models_backup_*/
+module-1/deepfake_detection/retrain_log.txt
+module-1/deepfake_detection/test_results.json
+module-1/deepfake_detection/audit_results.json
 
 # ─── PDF build/draft scripts (not project source) ─────────────────────────────
 fix_all_links_final.py

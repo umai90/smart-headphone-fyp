@@ -8,6 +8,12 @@ Outputs: system_diagram.txt  +  system_diagram.png
 import os
 import sys
 
+# The ASCII diagram below is full of box-drawing/arrow characters outside
+# cp1252 (Windows' default console codepage), which crashes plain print()
+# with UnicodeEncodeError. Force UTF-8 stdout so this runs on any console.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 _DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ─────────────────────────────────────────────────────────────────────────────

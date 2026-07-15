@@ -16,7 +16,8 @@ PROJECT="/home/pi/FYP_project"
 info "Installing system packages..."
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
-    python3-pip python3-tk \
+    python3-pip python3-tk python3-dev \
+    build-essential gcc g++ \
     espeak-ng espeak-ng-data \
     ffmpeg alsa-utils mpg123 \
     portaudio19-dev libportaudio2 libsndfile1 \
@@ -24,12 +25,38 @@ sudo apt-get install -y --no-install-recommends \
 ok "System packages ready."
 
 # ── 2. Python packages ────────────────────────────────────────────────────────
-info "Installing Python packages (takes a few minutes on first run)..."
-pip3 install --break-system-packages -q \
+info "Installing Python packages (takes 20-40 min on first run due to ARM64 compilation)..."
+
+# Batch 1: fast pure-Python and pre-built packages
+pip3 install --break-system-packages --no-cache-dir --timeout 300 \
     flask flask-cors requests \
     SpeechRecognition deep-translator gTTS pygame-ce \
-    sounddevice vosk openai-whisper argostranslate pyttsx3 \
-    librosa scikit-learn joblib matplotlib pydrive2 webrtcvad
+    sounddevice vosk faster-whisper pyttsx3 \
+    joblib matplotlib pydrive2 webrtcvad
+
+# numpy/scipy/librosa/soundfile pinned to match the training environment exactly
+# (see translate/requirements.txt) and installed BEFORE scikit-learn so it
+# compiles against this exact numpy. An unpinned/mismatched audio stack
+# produces measurably different feature vectors for the same audio file
+# across versions (confirmed: ~30% difference in feature magnitude between
+# librosa 0.11.0 and 0.10.2 for an identical file), which changes deepfake
+# detection verdicts.
+info "Installing pinned numpy/scipy/librosa/soundfile (must precede scikit-learn build)..."
+pip3 install --break-system-packages --no-cache-dir --timeout 300 \
+    'numpy==2.4.6' 'scipy==1.17.1' 'soundfile==0.13.1' 'librosa==0.11.0'
+
+# scikit-learn MUST be compiled from source on ARM64/Python 3.13:
+# PyPI pre-built wheels cause a Bus error due to ABI mismatch with Debian numpy.
+# Pinned to match the training environment's scikit-learn version exactly (see
+# translate/requirements.txt) — model .pkl files aren't guaranteed to load
+# correctly on a scikit-learn version other than the one that trained them.
+info "Compiling scikit-learn from source (this takes ~30 min on Pi)..."
+pip3 install --break-system-packages --no-cache-dir --no-binary scikit-learn 'scikit-learn==1.8.0'
+
+# Batch 2: argostranslate without stanza (stanza would pull torch/CUDA)
+pip3 install --break-system-packages --no-cache-dir --no-deps argostranslate stanza
+pip3 install --break-system-packages --no-cache-dir sentencepiece sacremoses
+
 ok "Python packages ready."
 
 # ── 3. Audio: headphone jack output ──────────────────────────────────────────
@@ -38,16 +65,22 @@ BOOT_CFG="/boot/firmware/config.txt"
 [[ ! -f "$BOOT_CFG" ]] && BOOT_CFG="/boot/config.txt"
 grep -q "dtparam=audio=on" "$BOOT_CFG" || echo "dtparam=audio=on" | sudo tee -a "$BOOT_CFG" > /dev/null
 
-# Default output to 3.5mm headphone jack (device 0 = built-in)
-sudo tee /etc/asound.conf > /dev/null << 'EOF'
-defaults.pcm.card 0
+# Auto-detect the BCM2835 headphone jack card number (varies by Pi model/kernel)
+HEADPHONE_CARD=$(aplay -l 2>/dev/null | grep -i 'bcm2835 Headphones\|Headphones' | head -1 | grep -oP 'card \K[0-9]+' || echo "2")
+info "Detected headphone card: $HEADPHONE_CARD"
+
+sudo tee /etc/asound.conf > /dev/null << EOF
+defaults.pcm.card $HEADPHONE_CARD
 defaults.pcm.device 0
-defaults.ctl.card 0
+defaults.ctl.card $HEADPHONE_CARD
 EOF
 
-# Set volume to 85%
-amixer sset Master 85% unmute 2>/dev/null || true
-ok "Audio configured (3.5mm headphone jack)."
+# Set volume using the PCM control (BCM2835 uses PCM Playback Volume, not Master)
+amixer -c "$HEADPHONE_CARD" cset numid=1 85% 2>/dev/null || \
+    amixer -c "$HEADPHONE_CARD" sset PCM 85% 2>/dev/null || \
+    amixer sset Master 85% unmute 2>/dev/null || true
+amixer -c "$HEADPHONE_CARD" cset numid=2 on 2>/dev/null || true
+ok "Audio configured (3.5mm headphone jack, card $HEADPHONE_CARD)."
 
 # ── 4. Vosk model (English STT) ───────────────────────────────────────────────
 VOSK_DIR="$PROJECT/translate/vosk-model-small-en-us"

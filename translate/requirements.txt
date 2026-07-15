@@ -3,15 +3,23 @@
 #   py -m pip install -r requirements.txt
 
 # ── Audio recording & processing ─────────────────────────
+# numpy/scipy pinned to match the Pi deployment (see setup_pi.sh) — an
+# unpinned librosa/soundfile/numpy/scipy stack produces MEASURABLY different
+# feature vectors for the same audio across versions (confirmed: ~30%
+# difference in extracted feature magnitude for the same file between
+# librosa 0.11.0 and 0.10.2), which changes deepfake-detection verdicts.
+# Keep in sync with setup_pi.sh.
 sounddevice
-numpy
+numpy==2.4.6
+scipy==1.17.1
 
 # ── Offline STT (Vosk for English, Whisper for Urdu) ─────
 # Vosk model folder needed:
 #   English: vosk-model-small-en-us  (https://alphacephei.com/vosk/models)
 # Note: No Vosk model exists for Urdu — Whisper is used instead (auto-downloads on first run).
+# Code imports faster_whisper.WhisperModel (mode1_offline_translation.py) — NOT openai-whisper.
 vosk
-openai-whisper
+faster-whisper
 
 # ── Offline Translation (Argostranslate) ─────────────────
 # Run "Setup Offline Packages" from main menu once (needs internet once).
@@ -38,9 +46,15 @@ flask
 flask-cors
 
 # ── Deepfake Voice Detection ──────────────────────────────
-librosa
+# Pinned to match the Pi deployment (lcd_ui/setup_pi.sh compiles this exact version
+# from source for ARM64). Model .pkl files are only guaranteed to load correctly
+# on the scikit-learn version that trained them — keep this pin in sync with
+# setup_pi.sh, and re-pin (both here and there) + retrain whenever you upgrade
+# scikit-learn in your training environment.
+librosa==0.11.0
+soundfile==0.13.1
 joblib
-scikit-learn
+scikit-learn==1.8.0
 matplotlib
 
 # ── Cloud Backup (Google Drive) ───────────────────────────
