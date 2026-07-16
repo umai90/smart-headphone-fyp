@@ -53,9 +53,39 @@ pip3 install --break-system-packages --no-cache-dir --timeout 300 \
 info "Compiling scikit-learn from source (this takes ~30 min on Pi)..."
 pip3 install --break-system-packages --no-cache-dir --no-binary scikit-learn 'scikit-learn==1.8.0'
 
-# Batch 2: argostranslate without stanza (stanza would pull torch/CUDA)
+# Batch 2: argostranslate without stanza's heavy deps (stanza would pull torch/CUDA)
 pip3 install --break-system-packages --no-cache-dir --no-deps argostranslate stanza
 pip3 install --break-system-packages --no-cache-dir sentencepiece sacremoses
+# minisbd is a real, lightweight runtime dependency of argostranslate.sbd (used for
+# sentence-boundary detection when ARGOS_CHUNK_TYPE=MINISBD, set in
+# mode1_offline_translation.py) — install it for real, unlike stanza below.
+pip3 install --break-system-packages --no-cache-dir minisbd
+
+# argostranslate/sbd.py does an unconditional top-level `import stanza`, and real
+# stanza's own __init__.py unconditionally imports torch several layers deep
+# (stanza -> pipeline.core -> models.common.doc/foundation_cache -> torch, torch.nn,
+# ...) just to define its Pipeline class — even though ARGOS_CHUNK_TYPE=MINISBD means
+# our translation path never instantiates it (confirmed: stanza.Pipeline is only
+# called lazily inside StanzaSentencizer.lazy_pipeline(), which MiniSBDSentencizer
+# bypasses entirely). Installing the real ~1GB+ ARM64 torch package solely to satisfy
+# this unused import chain is wasteful on Pi hardware, so replace the real (broken
+# without torch) stanza install with a minimal stub exposing just a Pipeline name.
+info "Replacing stanza with a lightweight stub (avoids an unused ~1GB+ torch install)..."
+STANZA_DIR=$(python3 -c "import site; print(site.getusersitepackages())")/stanza
+rm -rf "$STANZA_DIR"
+mkdir -p "$STANZA_DIR"
+cat > "$STANZA_DIR/__init__.py" << 'STANZASTUB'
+# Minimal stub replacing the real 'stanza' package — see setup_pi.sh for why.
+class Pipeline:
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "stanza.Pipeline is a stub and should never be called - "
+            "ARGOS_CHUNK_TYPE=MINISBD should route around it. If you see "
+            "this error, something is using stanza-based sentence splitting "
+            "unexpectedly."
+        )
+STANZASTUB
+ok "stanza stub installed."
 
 # CatBoost is part of the active deepfake ensemble (see translate/deepfake_checker.py
 # _EXCLUDED_MODELS). PyPI doesn't reliably publish aarch64 Linux wheels for every
