@@ -560,6 +560,15 @@ def _listen_offline_vad(target_samplerate=16000):
     speech_streak = 0
     total_frames  = 0
 
+    # Dead-input detection: PipeWire's virtual "default" ALSA device (see
+    # setup_pi.sh's Bluetooth-routing change) opens successfully even with no
+    # real microphone attached. Real hardware always has some self-noise, so
+    # a run of frames that are *exactly* all-zero means there's no physical
+    # input behind the stream — fail fast instead of waiting the full
+    # MAX_DURATION_S for webrtcvad to never trigger on silence.
+    DEAD_INPUT_FRAMES = 20  # ~600ms at FRAME_MS=30
+    silent_frame_streak = 0
+
     def _cb(indata, frames, time_info, status):
         audio_q.put(indata.copy())
 
@@ -590,6 +599,16 @@ def _listen_offline_vad(target_samplerate=16000):
             idx = 0
             while idx + FRAME_SAMPLES <= len(combined):
                 frame = combined[idx:idx + FRAME_SAMPLES]
+
+                if np.abs(frame).max() == 0:
+                    silent_frame_streak += 1
+                    if silent_frame_streak >= DEAD_INPUT_FRAMES:
+                        print("[MIC ERROR] No audio detected from input device — "
+                              "microphone may not be physically connected.")
+                        return None, target_samplerate
+                else:
+                    silent_frame_streak = 0
+
                 try:
                     is_speech = vad.is_speech(frame.tobytes(), target_samplerate)
                 except Exception:

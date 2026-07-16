@@ -13,6 +13,14 @@ RestartSec=5
 StandardOutput=append:/var/log/smart-headphone-api.log
 StandardError=append:/var/log/smart-headphone-api.err
 Environment=PYTHONUNBUFFERED=1
+# Required for sounddevice/PortAudio (ALSA) to reach the pi user's PipeWire
+# session (socket lives at /run/user/<uid>/pipewire-0) rather than falling
+# back to raw hardware devices. Without this, a system-level systemd service
+# has no XDG_RUNTIME_DIR and can't see the user's PipeWire session at all —
+# audio in/out (including any future Bluetooth speaker or USB mic routed
+# through PipeWire) silently doesn't reach it. UID 1000 is the default first
+# user (pi) on Raspberry Pi OS.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 
 [Install]
 WantedBy=multi-user.target

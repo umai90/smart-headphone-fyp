@@ -403,6 +403,17 @@ def _listen_vad(source_lang='en', fallback_to_text=True):
     silence_streak= 0
     triggered     = False
 
+    # Dead-input detection: PipeWire's virtual "default" ALSA device (see
+    # setup_pi.sh's Bluetooth-routing change) always opens successfully even
+    # when no real microphone is attached — unlike the old hardcoded-ALSA
+    # setup, which raised an immediate exception here. Real hardware always
+    # has some self-noise, so a run of frames that are *exactly* all-zero
+    # means there's no physical input device behind the stream. Fail fast
+    # instead of waiting the full MAX_DURATION_SEC for webrtcvad to never
+    # trigger on silence that will never end.
+    DEAD_INPUT_FRAMES = 20  # ~600ms at FRAME_MS=30
+    silent_frame_streak = 0
+
     try:
         with sd.InputStream(
             samplerate=native_rate,
@@ -427,6 +438,16 @@ def _listen_vad(source_lang='en', fallback_to_text=True):
                     chunk = np.pad(chunk, (0, FRAME_SAMP - len(chunk)))
                 else:
                     chunk = chunk[:FRAME_SAMP]
+
+                if np.abs(chunk).max() == 0:
+                    silent_frame_streak += 1
+                    if silent_frame_streak >= DEAD_INPUT_FRAMES:
+                        print("[MIC ERROR] No audio detected from input device — "
+                              "microphone may not be physically connected.")
+                        return (_text_fallback(source_lang) if fallback_to_text else None,
+                                None, TARGET_RATE)
+                else:
+                    silent_frame_streak = 0
 
                 try:
                     is_speech = vad.is_speech(chunk.tobytes(), TARGET_RATE)
