@@ -57,6 +57,16 @@ pip3 install --break-system-packages --no-cache-dir --no-binary scikit-learn 'sc
 pip3 install --break-system-packages --no-cache-dir --no-deps argostranslate stanza
 pip3 install --break-system-packages --no-cache-dir sentencepiece sacremoses
 
+# CatBoost is part of the active deepfake ensemble (see translate/deepfake_checker.py
+# _EXCLUDED_MODELS). PyPI doesn't reliably publish aarch64 Linux wheels for every
+# release, so this may fall back to a source build (slow, memory-heavy) or fail
+# outright — deepfake_checker.py already loads models individually and skips any
+# that fail to import/unpickle, so a catboost failure here degrades the ensemble
+# to 8 models rather than breaking the deploy. Non-fatal by design.
+info "Installing catboost (optional — ensemble degrades gracefully if unavailable)..."
+pip3 install --break-system-packages --no-cache-dir --timeout 300 'catboost==1.2.10' \
+    || echo -e "${YELLOW}[WARN]${NC} catboost install failed — ensemble will run without it (8/9 models)."
+
 ok "Python packages ready."
 
 # ── 3. Audio: headphone jack output ──────────────────────────────────────────

@@ -56,6 +56,10 @@ soundfile==0.13.1
 joblib
 scikit-learn==1.8.0
 matplotlib
+# Optional — part of the active ensemble but not fatal if it fails to install
+# (no guaranteed aarch64 wheel on all platforms); deepfake_checker.py skips
+# individual models that fail to load rather than erroring out.
+catboost==1.2.10
 
 # ── Cloud Backup (Google Drive) ───────────────────────────
 # One-time setup: py cloud_backup.py setup

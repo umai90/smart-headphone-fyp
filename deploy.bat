@@ -9,7 +9,7 @@ cls
 :: ═══════════════════════════════════════════════════════
 
 set PI_USER=pi
-set PI_HOST=192.168.1.10
+set PI_HOST=192.168.1.15
 set SRC=D:\FYP_project
 set PKG=%TEMP%\sh_deploy\FYP_project
 
