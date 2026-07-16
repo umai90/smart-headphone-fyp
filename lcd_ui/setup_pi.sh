@@ -99,7 +99,7 @@ pip3 install --break-system-packages --no-cache-dir --timeout 300 'catboost==1.2
 
 ok "Python packages ready."
 
-# ── 3. Audio: headphone jack output ──────────────────────────────────────────
+# ── 3. Audio: headphone jack output (+ PipeWire routing for Bluetooth) ────────
 info "Configuring audio..."
 BOOT_CFG="/boot/firmware/config.txt"
 [[ ! -f "$BOOT_CFG" ]] && BOOT_CFG="/boot/config.txt"
@@ -109,18 +109,24 @@ grep -q "dtparam=audio=on" "$BOOT_CFG" || echo "dtparam=audio=on" | sudo tee -a 
 HEADPHONE_CARD=$(aplay -l 2>/dev/null | grep -i 'bcm2835 Headphones\|Headphones' | head -1 | grep -oP 'card \K[0-9]+' || echo "2")
 info "Detected headphone card: $HEADPHONE_CARD"
 
-sudo tee /etc/asound.conf > /dev/null << EOF
-defaults.pcm.card $HEADPHONE_CARD
-defaults.pcm.device 0
-defaults.ctl.card $HEADPHONE_CARD
-EOF
+# pipewire-alsa provides the ALSA "pipewire" plugin + a !default override
+# (/etc/alsa/conf.d/99-pipewire-default.conf) that routes the system's default
+# ALSA device dynamically through PipeWire/WirePlumber, rather than a fixed
+# card. Deliberately do NOT write /etc/asound.conf with a hardcoded
+# defaults.pcm.card here — that would force every app (sounddevice, pygame)
+# straight to the 3.5mm jack and silently block a Bluetooth speaker from ever
+# being used, even after pairing + setting it as the WirePlumber default sink.
+# Playback falls back to the jack automatically when no Bluetooth sink is
+# connected/default, so no functionality is lost for the wired-only case.
+sudo apt-get install -y --no-install-recommends pipewire-alsa > /dev/null
+[[ -f /etc/asound.conf ]] && sudo mv /etc/asound.conf /etc/asound.conf.bak
 
 # Set volume using the PCM control (BCM2835 uses PCM Playback Volume, not Master)
 amixer -c "$HEADPHONE_CARD" cset numid=1 85% 2>/dev/null || \
     amixer -c "$HEADPHONE_CARD" sset PCM 85% 2>/dev/null || \
     amixer sset Master 85% unmute 2>/dev/null || true
 amixer -c "$HEADPHONE_CARD" cset numid=2 on 2>/dev/null || true
-ok "Audio configured (3.5mm headphone jack, card $HEADPHONE_CARD)."
+ok "Audio configured — routes via PipeWire (3.5mm jack by default, Bluetooth speaker when paired+connected)."
 
 # ── 4. Vosk model (English STT) ───────────────────────────────────────────────
 VOSK_DIR="$PROJECT/translate/vosk-model-small-en-us"
