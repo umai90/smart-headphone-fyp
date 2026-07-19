@@ -10,6 +10,11 @@ import '../services/pi_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/supported_languages.dart';
 
+/// This screen is intentionally Pi-only: the Pi is the single device that
+/// listens (its own microphone) and speaks (its own/Bluetooth speaker) —
+/// the phone here is a remote control and monitor, not an alternate
+/// input/output path. There is deliberately no phone-mic or on-screen
+/// keyboard translate flow.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -18,21 +23,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _textCtrl = TextEditingController();
-  bool _showKeyboard = false;
-  bool _showPiControls = false;
-
   // Server connectivity — polled quietly every 12 s
   bool _serverOnline = false;
   bool _pollBusy = false;
   Timer? _pollTimer;
 
-  // Pi session state — lifted here so stop bar is always visible
+  // Pi session state
   bool _piRunning = false;
   bool _piLoading = false;
   String _activeDirection = '';  // '1way' | '2way'
   int _recordingCount = 0;       // count utterances recorded this session
   Timer? _recordingTimer;
+
+  // Live monitor — what the Pi last heard/translated, from /status polling
+  String _lastOriginal = '';
+  String _lastTranslated = '';
 
   @override
   void initState() {
@@ -46,7 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _textCtrl.dispose();
     _pollTimer?.cancel();
     _recordingTimer?.cancel();
     super.dispose();
@@ -69,16 +73,28 @@ class _HomeScreenState extends State<HomeScreen> {
           _piRunning = true;
           _recordingCount = status.recordingsLocal;
           _activeDirection = status.direction;
+          _lastOriginal = status.lastOriginal;
+          _lastTranslated = status.lastTranslated;
         });
-        _recordingTimer?.cancel();
-        _recordingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-          if (!_piRunning || !mounted) { _recordingTimer?.cancel(); return; }
-          final s = await PiService(p.serverUrl).getStatus();
-          if (mounted && s != null) setState(() => _recordingCount = s.recordingsLocal);
-        });
+        _startRecordingPoll(url);
       }
     }
     _pollBusy = false;
+  }
+
+  void _startRecordingPoll(String url) {
+    _recordingTimer?.cancel();
+    _recordingTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!_piRunning || !mounted) { _recordingTimer?.cancel(); return; }
+      final status = await PiService(url).getStatus();
+      if (mounted && status != null) {
+        setState(() {
+          _recordingCount = status.recordingsLocal;
+          _lastOriginal = status.lastOriginal;
+          _lastTranslated = status.lastTranslated;
+        });
+      }
+    });
   }
 
   Future<void> _startPiSession(String direction) async {
@@ -100,17 +116,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _piLoading = false;
         _activeDirection = direction;
         _recordingCount = 0;
-        _showPiControls = false;
+        _lastOriginal = '';
+        _lastTranslated = '';
       });
-      // Poll recording count every 5 s while session is active
-      _recordingTimer?.cancel();
-      _recordingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-        if (!_piRunning || !mounted) { _recordingTimer?.cancel(); return; }
-        final status = await PiService(p.serverUrl).getStatus();
-        if (mounted && status != null) {
-          setState(() => _recordingCount = status.recordingsLocal);
-        }
-      });
+      _startRecordingPoll(p.serverUrl);
     } else {
       setState(() => _piLoading = false);
       if (mounted) {
@@ -208,12 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              _AppBar(
-                serverOnline: _serverOnline,
-                piExpanded: _showPiControls,
-                onTogglePi: () =>
-                    setState(() => _showPiControls = !_showPiControls),
-              ),
+              _AppBar(serverOnline: _serverOnline),
               // ── STOP SESSION BAR — always visible when Pi is running ──────
               if (_piRunning)
                 _StopSessionBar(
@@ -234,31 +238,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPickTo: () =>
                             _pickLanguage(context, isFrom: false),
                       ),
-                      // Pi Controls — collapsible, hidden by default
-                      if (_showPiControls && !_piRunning) ...[
-                        const SizedBox(height: 14),
+                      const SizedBox(height: 14),
+                      if (!_piRunning)
                         _PiControlSection(
                           serverOnline: _serverOnline,
                           loading: _piLoading,
                           onStart: _startPiSession,
+                        )
+                      else
+                        _LiveMonitorSection(
+                          fromLang: context.watch<TranslationProvider>().fromLang,
+                          toLang: context.watch<TranslationProvider>().toLang,
+                          lastOriginal: _lastOriginal,
+                          lastTranslated: _lastTranslated,
                         ),
-                      ],
-                      const SizedBox(height: 20),
-                      const _MicSection(),
-                      const SizedBox(height: 6),
-                      _KeyboardToggle(
-                        show: _showKeyboard,
-                        onToggle: () =>
-                            setState(() => _showKeyboard = !_showKeyboard),
-                      ),
-                      if (_showKeyboard) ...[
-                        const SizedBox(height: 14),
-                        _KeyboardInput(controller: _textCtrl),
-                      ],
-                      const SizedBox(height: 18),
-                      const _ResultSection(),
-                      const SizedBox(height: 8),
-                      _NewTranslationBtn(),
                     ],
                   ),
                 ),
@@ -293,14 +286,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _AppBar extends StatelessWidget {
   final bool serverOnline;
-  final bool piExpanded;
-  final VoidCallback onTogglePi;
 
-  const _AppBar({
-    required this.serverOnline,
-    required this.piExpanded,
-    required this.onTogglePi,
-  });
+  const _AppBar({required this.serverOnline});
 
   @override
   Widget build(BuildContext context) {
@@ -352,52 +339,37 @@ class _AppBar extends StatelessWidget {
           ),
           // Server status dot
           Tooltip(
-            message: serverOnline ? 'Server connected' : 'Server offline',
-            child: Container(
-              width: 8,
-              height: 8,
-              margin: const EdgeInsets.only(right: 10),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: serverOnline
-                    ? AppTheme.accentGreen
-                    : Colors.white24,
-                boxShadow: serverOnline
-                    ? [
-                        BoxShadow(
-                            color:
-                                AppTheme.accentGreen.withValues(alpha: 0.6),
-                            blurRadius: 6)
-                      ]
-                    : null,
-              ),
-            ),
-          ),
-          // Pi controls toggle
-          GestureDetector(
-            onTap: onTogglePi,
-            child: Tooltip(
-              message: piExpanded ? 'Hide Pi Controls' : 'Pi Controls',
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: piExpanded
-                      ? AppTheme.accentGreen.withValues(alpha: 0.15)
-                      : Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: piExpanded
-                        ? AppTheme.accentGreen.withValues(alpha: 0.4)
-                        : Colors.white12,
+            message: serverOnline ? 'Pi connected' : 'Pi offline',
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: serverOnline
+                        ? AppTheme.accentGreen
+                        : Colors.white24,
+                    boxShadow: serverOnline
+                        ? [
+                            BoxShadow(
+                                color: AppTheme.accentGreen
+                                    .withValues(alpha: 0.6),
+                                blurRadius: 6)
+                          ]
+                        : null,
                   ),
                 ),
-                child: Icon(
-                  Icons.developer_board_rounded,
-                  color:
-                      piExpanded ? AppTheme.accentGreen : Colors.white38,
-                  size: 18,
+                const SizedBox(width: 6),
+                Text(
+                  serverOnline ? 'Pi connected' : 'Pi offline',
+                  style: TextStyle(
+                    color: serverOnline ? AppTheme.accentGreen : Colors.white38,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ],
@@ -653,517 +625,87 @@ class _SwapBtnState extends State<_SwapBtn>
       );
 }
 
-// ──────────────────────────── Mic Section ────────────────────────────────────
+// ─────────────────────────── Live Monitor Section ─────────────────────────────
+//
+// Shown while a Pi Control session is running. The Pi does all the actual
+// listening/translating/speaking on its own hardware — this panel is a
+// read-only monitor of what it last heard and said, polled from /status.
 
-class _MicSection extends StatefulWidget {
-  const _MicSection();
+class _LiveMonitorSection extends StatelessWidget {
+  final Language fromLang;
+  final Language toLang;
+  final String lastOriginal;
+  final String lastTranslated;
 
-  @override
-  State<_MicSection> createState() => _MicSectionState();
-}
-
-class _MicSectionState extends State<_MicSection>
-    with TickerProviderStateMixin {
-  late final AnimationController _pulseCtrl;
-  late final Animation<double> _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900))
-      ..repeat(reverse: true);
-    _pulse = Tween<double>(begin: 1.0, end: 1.22).animate(
-        CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _pulseCtrl.dispose();
-    super.dispose();
-  }
+  const _LiveMonitorSection({
+    required this.fromLang,
+    required this.toLang,
+    required this.lastOriginal,
+    required this.lastTranslated,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final p = context.watch<TranslationProvider>();
-    final isListening = p.state == AppState.listening;
-    final isTranslating = p.state == AppState.translating;
+    if (lastOriginal.isEmpty && lastTranslated.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFF142238),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Column(
+          children: [
+            Icon(Icons.hearing_rounded,
+                color: AppTheme.accent.withValues(alpha: 0.4), size: 40),
+            const SizedBox(height: 12),
+            const Text('Listening for speech on the Pi…',
+                style: TextStyle(color: Colors.white38, fontSize: 13)),
+          ],
+        ),
+      );
+    }
 
     return Column(
       children: [
-        _StatusLabel(state: p.state),
-        const SizedBox(height: 22),
-        GestureDetector(
-          onTap: () async {
-            HapticFeedback.mediumImpact();
-            if (isListening) {
-              await p.stopListening();
-            } else if (!isTranslating) {
-              await p.startListening();
-            }
-          },
-          child: AnimatedBuilder(
-            animation: _pulse,
-            builder: (_, child) => Transform.scale(
-              scale: isListening ? _pulse.value : 1.0,
-              child: child,
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                if (isListening) ...[
-                  const _Halo(size: 138, opacity: 0.06, isRed: true),
-                  const _Halo(size: 112, opacity: 0.13, isRed: true),
-                ],
-                _MicBtn(
-                    isListening: isListening,
-                    isTranslating: isTranslating),
-              ],
-            ),
+        if (lastOriginal.isNotEmpty)
+          _MonitorCard(
+            flag: fromLang.flag,
+            label: fromLang.name,
+            text: lastOriginal,
+            highlight: false,
           ),
-        ),
-        const SizedBox(height: 18),
-        _WaveformBars(active: isListening),
-        if (isListening && p.recognizedText.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _LiveBubble(text: p.recognizedText),
+        if (lastTranslated.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _MonitorCard(
+            flag: toLang.flag,
+            label: toLang.name,
+            text: lastTranslated,
+            highlight: true,
+          ),
         ],
       ],
     );
   }
 }
 
-class _Halo extends StatelessWidget {
-  final double size;
-  final double opacity;
-  final bool isRed;
-  const _Halo(
-      {required this.size, required this.opacity, this.isRed = false});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: (isRed ? Colors.red : AppTheme.accent)
-              .withValues(alpha: opacity),
-        ),
-      );
-}
-
-class _MicBtn extends StatelessWidget {
-  final bool isListening;
-  final bool isTranslating;
-  const _MicBtn(
-      {required this.isListening, required this.isTranslating});
-
-  @override
-  Widget build(BuildContext context) {
-    final gradColors = isListening
-        ? [const Color(0xFFEF5350), const Color(0xFFB71C1C)]
-        : isTranslating
-            ? [AppTheme.accent, AppTheme.accentGreen]
-            : [const Color(0xFF0099D4), const Color(0xFF005F88)];
-
-    final glowColor = isListening ? Colors.red : AppTheme.accent;
-
-    return Container(
-      width: 90,
-      height: 90,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: gradColors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-              color: glowColor.withValues(alpha: 0.55),
-              blurRadius: 28,
-              spreadRadius: 4),
-          BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 10,
-              offset: const Offset(0, 4)),
-        ],
-      ),
-      child: isTranslating
-          ? const Padding(
-              padding: EdgeInsets.all(28),
-              child: CircularProgressIndicator(
-                  color: Colors.white, strokeWidth: 2.5),
-            )
-          : Icon(
-              isListening ? Icons.stop_rounded : Icons.mic_rounded,
-              color: Colors.white,
-              size: 40,
-            ),
-    );
-  }
-}
-
-class _StatusLabel extends StatelessWidget {
-  final AppState state;
-  const _StatusLabel({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final (text, color) = switch (state) {
-      AppState.idle =>
-        ('Tap microphone to start speaking', Colors.white38),
-      AppState.listening =>
-        ('Listening…  tap to stop', AppTheme.accent),
-      AppState.translating =>
-        ('Translating…', AppTheme.accentGreen),
-      AppState.done =>
-        ('Translation complete ✓', AppTheme.accentGreen),
-      AppState.error =>
-        ('Something went wrong', Colors.redAccent),
-    };
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      child: Text(
-        text,
-        key: ValueKey(state),
-        style: TextStyle(color: color, fontSize: 13, letterSpacing: 0.4),
-      ),
-    );
-  }
-}
-
-// ──────────────────────────── Waveform Bars ───────────────────────────────────
-
-class _WaveformBars extends StatefulWidget {
-  final bool active;
-  const _WaveformBars({required this.active});
-
-  @override
-  State<_WaveformBars> createState() => _WaveformBarsState();
-}
-
-class _WaveformBarsState extends State<_WaveformBars>
-    with TickerProviderStateMixin {
-  static const _n = 9;
-  late final List<AnimationController> _ctrls;
-  late final List<Animation<double>> _anims;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrls = List.generate(
-      _n,
-      (i) => AnimationController(
-        vsync: this,
-        duration: Duration(milliseconds: 240 + i * 45),
-      ),
-    );
-    _anims = _ctrls
-        .map((c) => Tween<double>(begin: 3, end: 24).animate(
-            CurvedAnimation(parent: c, curve: Curves.easeInOut)))
-        .toList();
-    if (widget.active) _startAll();
-  }
-
-  void _startAll() {
-    for (var i = 0; i < _n; i++) {
-      Future.delayed(Duration(milliseconds: i * 30),
-          () { if (mounted) _ctrls[i].repeat(reverse: true); });
-    }
-  }
-
-  void _stopAll() {
-    for (final c in _ctrls) { c.animateTo(0); }
-  }
-
-  @override
-  void didUpdateWidget(_WaveformBars old) {
-    super.didUpdateWidget(old);
-    if (widget.active != old.active) {
-      widget.active ? _startAll() : _stopAll();
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final c in _ctrls) { c.dispose(); }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: widget.active ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 350),
-      child: SizedBox(
-        height: 30,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: List.generate(_n, (i) {
-            final isMid = i == _n ~/ 2;
-            return AnimatedBuilder(
-              animation: _anims[i],
-              builder: (_, __) => Container(
-                width: 3.5,
-                height: _anims[i].value,
-                margin: const EdgeInsets.symmetric(horizontal: 2),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: isMid
-                        ? [AppTheme.accentGreen, AppTheme.accent]
-                        : [
-                            AppTheme.accent,
-                            AppTheme.accent.withValues(alpha: 0.4)
-                          ],
-                  ),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
-  }
-}
-
-class _LiveBubble extends StatelessWidget {
-  final String text;
-  const _LiveBubble({required this.text});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppTheme.accent.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(14),
-          border:
-              Border.all(color: AppTheme.accent.withValues(alpha: 0.2)),
-        ),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-              color: Colors.white70, fontSize: 14, height: 1.4),
-        ),
-      );
-}
-
-// ─────────────────────────── Keyboard Toggle ─────────────────────────────────
-
-class _KeyboardToggle extends StatelessWidget {
-  final bool show;
-  final VoidCallback onToggle;
-  const _KeyboardToggle({required this.show, required this.onToggle});
-
-  @override
-  Widget build(BuildContext context) => TextButton.icon(
-        onPressed: onToggle,
-        icon: Icon(
-          show ? Icons.keyboard_hide_rounded : Icons.keyboard_rounded,
-          color: Colors.white30,
-          size: 17,
-        ),
-        label: Text(
-          show ? 'Hide keyboard' : 'Type instead',
-          style: const TextStyle(color: Colors.white30, fontSize: 12),
-        ),
-      );
-}
-
-// ──────────────────────────── Keyboard Input ─────────────────────────────────
-
-class _KeyboardInput extends StatelessWidget {
-  final TextEditingController controller;
-  const _KeyboardInput({required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.read<TranslationProvider>();
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF142238),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        children: [
-          TextField(
-            controller: controller,
-            style: const TextStyle(color: Colors.white, fontSize: 15),
-            maxLines: 3,
-            decoration: const InputDecoration(
-              hintText: 'Type text to translate…',
-              hintStyle: TextStyle(color: Colors.white24),
-              contentPadding: EdgeInsets.all(16),
-              border: InputBorder.none,
-            ),
-          ),
-          const Divider(color: Colors.white10, height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-            child: Row(
-              children: [
-                TextButton(
-                  onPressed: controller.clear,
-                  child: const Text('Clear',
-                      style: TextStyle(color: Colors.white38)),
-                ),
-                const Spacer(),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    final txt = controller.text.trim();
-                    if (txt.isNotEmpty) {
-                      p.translateText(txt);
-                      controller.clear();
-                    }
-                  },
-                  icon: const Icon(Icons.translate_rounded, size: 16),
-                  label: const Text('Translate'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.accent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 10),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ──────────────────────────── Result Section ─────────────────────────────────
-
-class _ResultSection extends StatelessWidget {
-  const _ResultSection();
-
-  @override
-  Widget build(BuildContext context) {
-    final p = context.watch<TranslationProvider>();
-
-    if (p.state == AppState.error) {
-      return _ErrorBanner(
-        message: p.errorMessage,
-        onDismiss: p.resetState,
-        onRetry: () {
-          if (p.recognizedText.isNotEmpty) {
-            p.translateText(p.recognizedText);
-          }
-        },
-      );
-    }
-
-    if (p.recognizedText.isEmpty && p.translatedText.isEmpty) {
-      return const _EmptyHint();
-    }
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 450),
-      switchInCurve: Curves.easeOutCubic,
-      transitionBuilder: (child, anim) => FadeTransition(
-        opacity: anim,
-        child: SlideTransition(
-          position: Tween<Offset>(
-                  begin: const Offset(0, 0.08), end: Offset.zero)
-              .animate(anim),
-          child: child,
-        ),
-      ),
-      child: Column(
-        key: ValueKey('${p.recognizedText}_${p.translatedText}'),
-        children: [
-          if (p.recognizedText.isNotEmpty)
-            _TranslationCard(
-              lang: p.fromLang.name,
-              flag: p.fromLang.flag,
-              text: p.recognizedText,
-              onSpeak: p.speakOriginal,
-              onCopy: () => _copy(context, p, p.recognizedText),
-              highlight: false,
-              matchScore: null,
-            ),
-          if (p.translatedText.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _TranslationCard(
-              lang: p.toLang.name,
-              flag: p.toLang.flag,
-              text: p.translatedText,
-              onSpeak: p.speakTranslation,
-              onCopy: () => _copy(context, p, p.translatedText),
-              highlight: true,
-              matchScore: p.matchScore > 0 ? p.matchScore : null,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Future<void> _copy(
-      BuildContext context, TranslationProvider p, String text) async {
-    await p.copyToClipboard(text);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Row(children: [
-          Icon(Icons.check_circle_rounded,
-              color: AppTheme.accentGreen, size: 16),
-          SizedBox(width: 8),
-          Text('Copied to clipboard',
-              style: TextStyle(color: Colors.white)),
-        ]),
-        backgroundColor: const Color(0xFF1A3050),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-      ),
-    );
-  }
-}
-
-class _TranslationCard extends StatelessWidget {
-  final String lang;
+class _MonitorCard extends StatelessWidget {
   final String flag;
+  final String label;
   final String text;
-  final VoidCallback onSpeak;
-  final VoidCallback onCopy;
   final bool highlight;
-  final double? matchScore;
 
-  const _TranslationCard({
-    required this.lang,
+  const _MonitorCard({
     required this.flag,
+    required this.label,
     required this.text,
-    required this.onSpeak,
-    required this.onCopy,
     required this.highlight,
-    required this.matchScore,
   });
-
-  Color _scoreColor(double s) {
-    if (s >= 0.8) return AppTheme.accentGreen;
-    if (s >= 0.5) return Colors.amber;
-    return Colors.redAccent;
-  }
 
   @override
   Widget build(BuildContext context) {
     final accent = highlight ? AppTheme.accent : Colors.white54;
-    final words = text.trim().split(RegExp(r'\s+')).length;
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -1182,19 +724,6 @@ class _TranslationCard extends StatelessWidget {
               : Colors.white.withValues(alpha: 0.07),
           width: highlight ? 1.2 : 1.0,
         ),
-        boxShadow: highlight
-            ? [
-                BoxShadow(
-                    color: AppTheme.accent.withValues(alpha: 0.1),
-                    blurRadius: 18,
-                    offset: const Offset(0, 5))
-              ]
-            : [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3))
-              ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1203,162 +732,22 @@ class _TranslationCard extends StatelessWidget {
             children: [
               Text(flag, style: const TextStyle(fontSize: 17)),
               const SizedBox(width: 8),
-              Expanded(
-                child: Text(lang,
-                    style: TextStyle(
-                        color: accent,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8)),
-              ),
-              if (matchScore != null) ...[
-                _ScoreBadge(
-                    score: matchScore!,
-                    color: _scoreColor(matchScore!)),
-                const SizedBox(width: 8),
-              ],
-              _ActionBtn(
-                  icon: Icons.volume_up_rounded,
-                  color: accent,
-                  onTap: onSpeak),
-              const SizedBox(width: 6),
-              _ActionBtn(
-                  icon: Icons.copy_rounded,
-                  color: Colors.white38,
-                  onTap: onCopy),
+              Text(label,
+                  style: TextStyle(
+                      color: accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8)),
             ],
           ),
           const SizedBox(height: 12),
           Text(text,
               style: const TextStyle(
                   color: Colors.white, fontSize: 16, height: 1.6)),
-          const SizedBox(height: 10),
-          Text('$words ${words == 1 ? "word" : "words"}',
-              style:
-                  const TextStyle(color: Colors.white24, fontSize: 11)),
         ],
       ),
     );
   }
-}
-
-class _ScoreBadge extends StatelessWidget {
-  final double score;
-  final Color color;
-  const _ScoreBadge({required this.score, required this.color});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
-        ),
-        child: Text(
-          '${(score * 100).toInt()}%',
-          style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.bold),
-        ),
-      );
-}
-
-class _ActionBtn extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _ActionBtn(
-      {required this.icon, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, color: color, size: 17),
-        ),
-      );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  final String message;
-  final VoidCallback onDismiss;
-  final VoidCallback onRetry;
-  const _ErrorBanner(
-      {required this.message,
-      required this.onDismiss,
-      required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.red.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: Colors.redAccent.withValues(alpha: 0.3)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.error_outline_rounded,
-                color: Colors.redAccent, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-                child: Text(message,
-                    style: const TextStyle(
-                        color: Colors.redAccent, fontSize: 13))),
-            TextButton(
-              onPressed: onRetry,
-              child: const Text('Retry',
-                  style: TextStyle(color: AppTheme.accent)),
-            ),
-            GestureDetector(
-              onTap: onDismiss,
-              child: const Icon(Icons.close_rounded,
-                  color: Colors.redAccent, size: 18),
-            ),
-          ],
-        ),
-      );
-}
-
-class _EmptyHint extends StatelessWidget {
-  const _EmptyHint();
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 16),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(26),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.03),
-                border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.07)),
-              ),
-              child: const Icon(Icons.translate_rounded,
-                  color: Colors.white10, size: 52),
-            ),
-            const SizedBox(height: 16),
-            const Text('Your translation will appear here',
-                style:
-                    TextStyle(color: Colors.white24, fontSize: 14)),
-            const SizedBox(height: 6),
-            const Text('Supports 34 languages — voice & text',
-                style: TextStyle(
-                    color: Color(0x26FFFFFF), fontSize: 12)),
-          ],
-        ),
-      );
 }
 
 // ─────────────── Stop Session Bar (always visible when Pi running) ────────────
@@ -1497,34 +886,6 @@ class _PulsingDotState extends State<_PulsingDot>
           ),
         ),
       );
-}
-
-// ──────────────────── New Translation Button ──────────────────────────────────
-
-class _NewTranslationBtn extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final p = context.watch<TranslationProvider>();
-    if (p.state != AppState.done && p.state != AppState.error) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: SizedBox(
-        width: double.infinity,
-        child: TextButton.icon(
-          onPressed: () {
-            HapticFeedback.lightImpact();
-            context.read<TranslationProvider>().clearResults();
-          },
-          icon: const Icon(Icons.refresh_rounded, size: 16,
-              color: Colors.white38),
-          label: const Text('New Translation',
-              style: TextStyle(color: Colors.white38, fontSize: 12)),
-        ),
-      ),
-    );
-  }
 }
 
 // ─────────────────────────── Pi Control Section ───────────────────────────────

@@ -46,8 +46,9 @@ void main() {
   testWidgets('App launches and shows main UI elements', (WidgetTester tester) async {
     await pumpPastSplash(tester);
 
-    // mic_rounded appears both as the bottom-nav "Translate" tab icon and
-    // as the big mic button on HomeScreen.
+    // mic_rounded appears as the bottom-nav "Translate" tab icon (HomeScreen
+    // itself is Pi Control only — no phone-mic UI, the Pi is the sole
+    // listen/speak device).
     expect(find.byIcon(Icons.mic_rounded), findsWidgets);
   });
 
