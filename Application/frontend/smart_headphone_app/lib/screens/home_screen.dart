@@ -82,6 +82,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startPiSession(String direction) async {
+    final consented = await _confirmRecordingConsent(direction);
+    if (!mounted || !consented) return;
+
     setState(() => _piLoading = true);
     final p = context.read<TranslationProvider>();
     final ok = await PiService(p.serverUrl).startTranslation(
@@ -143,6 +146,52 @@ class _HomeScreenState extends State<HomeScreen> {
       margin: const EdgeInsets.all(16),
       duration: const Duration(seconds: 4),
     ));
+  }
+
+  /// Asks the user to explicitly consent before the Pi's microphone starts
+  /// listening — this session records ambient conversation (potentially
+  /// involving people other than the phone's owner), so a clear opt-in
+  /// gate before recording begins is a deliberate privacy choice, not just
+  /// a confirmation dialog.
+  Future<bool> _confirmRecordingConsent(String direction) async {
+    final label = direction == '2way' ? '2-Way conversation' : '1-Way';
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1E3C),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: AppTheme.accent.withValues(alpha: 0.25))),
+        icon: const Icon(Icons.mic_rounded, color: AppTheme.accent, size: 32),
+        title: const Text('Allow voice recording?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: Text(
+          'Starting $label will make the Pi listen through its own '
+          'microphone and save each voice as a recording. Make sure '
+          'everyone nearby is okay with being recorded before continuing.',
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white38)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accent,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Allow & Start',
+                style: TextStyle(color: Colors.black, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   @override
