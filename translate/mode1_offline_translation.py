@@ -559,6 +559,8 @@ def _listen_offline_fixed(duration=6, target_samplerate=16000):
         return audio, target_samplerate
 
     except Exception as e:
+        global _mic_device_index
+        _mic_device_index = None  # re-resolve device on next attempt
         print(f"[MIC ERROR] {e}")
         return None, target_samplerate
 
@@ -627,6 +629,8 @@ def _listen_offline_vad(target_samplerate=16000):
             device=_get_mic_device_index(),
         )
     except Exception as e:
+        global _mic_device_index
+        _mic_device_index = None  # re-resolve device on next attempt
         print(f"[MIC] Cannot open stream for VAD: {e}. Falling back to fixed recording.")
         return _listen_offline_fixed(target_samplerate=target_samplerate)
 

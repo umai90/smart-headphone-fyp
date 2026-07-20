@@ -397,6 +397,8 @@ def _listen_fixed(source_lang='en', fallback_to_text=True):
             audio = _resample_audio(audio, native_rate, TARGET_RATE)
         return _send_to_stt(audio, sr_lang, source_lang, fallback_to_text)
     except Exception as e:
+        global _mic_device_index
+        _mic_device_index = None  # re-resolve device on next attempt
         print(f"[MIC ERROR] {e}")
         try:
             rec_audio = (_resample_audio(recording.flatten(), native_rate, TARGET_RATE)
@@ -532,6 +534,13 @@ def _listen_vad(source_lang='en', fallback_to_text=True):
                         break
 
     except Exception as e:
+        # Some budget USB audio adapters intermittently drop their input
+        # channel (observed live: device briefly reports 0 input channels,
+        # then recovers on its own) - clear the cached device index so the
+        # next attempt re-resolves it fresh instead of retrying the same
+        # now-stale index forever.
+        global _mic_device_index
+        _mic_device_index = None
         print(f"[MIC-VAD] Stream error: {e}  -> falling back to fixed recording")
         return _listen_fixed(source_lang, fallback_to_text)
 
