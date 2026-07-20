@@ -15,11 +15,15 @@ PROJECT="/home/pi/FYP_project"
 # ── 1. System packages ────────────────────────────────────────────────────────
 info "Installing system packages..."
 sudo apt-get update -qq
+# flac: the SpeechRecognition library shells out to the flac CLI to convert
+# audio before sending it to the Google Speech API (online STT) - without
+# it, every online-mode recognition silently fails with "FLAC conversion
+# utility not available" even though the mic/VAD pipeline works fine.
 sudo apt-get install -y --no-install-recommends \
     python3-pip python3-tk python3-dev \
     build-essential gcc g++ \
     espeak-ng espeak-ng-data \
-    ffmpeg alsa-utils mpg123 \
+    ffmpeg alsa-utils mpg123 flac \
     portaudio19-dev libportaudio2 libsndfile1 \
     > /dev/null
 ok "System packages ready."
