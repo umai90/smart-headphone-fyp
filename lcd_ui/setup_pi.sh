@@ -126,7 +126,29 @@ amixer -c "$HEADPHONE_CARD" cset numid=1 85% 2>/dev/null || \
     amixer -c "$HEADPHONE_CARD" sset PCM 85% 2>/dev/null || \
     amixer sset Master 85% unmute 2>/dev/null || true
 amixer -c "$HEADPHONE_CARD" cset numid=2 on 2>/dev/null || true
-ok "Audio configured — routes via PipeWire (3.5mm jack by default, Bluetooth speaker when paired+connected)."
+
+# By default WirePlumber auto-switches a connected Bluetooth speaker to a
+# headset/handsfree (HSP/HFP) profile whenever anything requests audio
+# input, which exposes the speaker's own low-quality mic and lets it get
+# selected as the default input source ahead of the real USB microphone —
+# confirmed happening live (input silently switched to the Bluetooth
+# speaker's mic after a reconnect). This project's audio model is strict:
+# microphone input is USB-only, Bluetooth is output-only. Disable the
+# autoswitch so the Bluetooth device stays A2DP-sink-only (no HSP/HFP,
+# hence no mic capability exposed) no matter how many times it reconnects.
+mkdir -p "$HOME/.config/wireplumber/wireplumber.conf.d"
+cat > "$HOME/.config/wireplumber/wireplumber.conf.d/99-no-bt-mic.conf" << 'EOF'
+# Never auto-switch the Bluetooth speaker to a headset/handsfree profile
+# (which exposes its own low-quality mic as a potential input source).
+# The Bluetooth speaker must always stay in A2DP-sink-only mode — output
+# only. Microphone input comes exclusively from the wired USB adapter,
+# never from Bluetooth.
+wireplumber.settings = {
+  bluetooth.autoswitch-to-headset-profile = false
+}
+EOF
+
+ok "Audio configured — routes via PipeWire (3.5mm jack by default, Bluetooth speaker when paired+connected). Bluetooth mic auto-switch disabled — input stays USB-only."
 
 # ── 4. Vosk model (English STT) ───────────────────────────────────────────────
 VOSK_DIR="$PROJECT/translate/vosk-model-small-en-us"
