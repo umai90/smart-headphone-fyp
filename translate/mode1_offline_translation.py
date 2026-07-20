@@ -475,12 +475,57 @@ def _speak_pyttsx3(text):
 # ═════════════════════════════════════════
 
 _input_device_rate = None
+_mic_device_index  = None
+
+
+def _get_mic_device_index():
+    """
+    Explicitly resolve the microphone input device by name rather than
+    trusting PipeWire's "default" input at record time — see the matching
+    function in mode2_online_translation.py for the full rationale (a
+    second line of defense beyond the WirePlumber policy fix, so the
+    offline pipeline can never end up recording from a Bluetooth speaker's
+    own mic instead of the wired USB microphone). Cached for process life.
+    """
+    global _mic_device_index
+    if _mic_device_index is not None:
+        return _mic_device_index
+    try:
+        devices = sd.query_devices()
+        usb_candidates = [
+            i for i, d in enumerate(devices)
+            if d['max_input_channels'] > 0
+            and 'bluez' not in d['name'].lower()
+            and 'bluetooth' not in d['name'].lower()
+            and 'usb' in d['name'].lower()
+        ]
+        if usb_candidates:
+            _mic_device_index = usb_candidates[0]
+            print(f"[MIC] Using USB input device: {devices[_mic_device_index]['name']}", flush=True)
+        else:
+            non_bt = [
+                i for i, d in enumerate(devices)
+                if d['max_input_channels'] > 0
+                and 'bluez' not in d['name'].lower()
+                and 'bluetooth' not in d['name'].lower()
+            ]
+            _mic_device_index = non_bt[0] if non_bt else None
+            print(f"[MIC WARNING] No USB input device found by name — "
+                  f"falling back to {'device ' + str(_mic_device_index) if _mic_device_index is not None else 'system default'}.",
+                  flush=True)
+    except Exception as e:
+        print(f"[MIC WARNING] Device lookup failed ({e}) — using system default.", flush=True)
+        _mic_device_index = None
+    return _mic_device_index
+
 
 def _get_input_device_rate():
     global _input_device_rate
     if _input_device_rate is None:
         try:
-            _input_device_rate = int(sd.query_devices(kind='input')['default_samplerate'])
+            dev = _get_mic_device_index()
+            info = sd.query_devices(dev, kind='input') if dev is not None else sd.query_devices(kind='input')
+            _input_device_rate = int(info['default_samplerate'])
         except Exception:
             _input_device_rate = 16000
     return _input_device_rate
@@ -499,7 +544,8 @@ def _listen_offline_fixed(duration=6, target_samplerate=16000):
             int(duration * native_rate),
             samplerate=native_rate,
             channels=1,
-            dtype='int16'
+            dtype='int16',
+            device=_get_mic_device_index(),
         )
         sd.wait()
         print("[MIC] Done recording.")
@@ -577,7 +623,8 @@ def _listen_offline_vad(target_samplerate=16000):
     try:
         stream = sd.InputStream(
             samplerate=native_rate, channels=1, dtype='int16',
-            blocksize=blocksize, callback=_cb
+            blocksize=blocksize, callback=_cb,
+            device=_get_mic_device_index(),
         )
     except Exception as e:
         print(f"[MIC] Cannot open stream for VAD: {e}. Falling back to fixed recording.")

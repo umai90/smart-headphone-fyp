@@ -145,13 +145,61 @@ except Exception:
     _sr_recognizer = None
 _pyttsx3_engine    = None
 _input_device_rate = None
+_mic_device_index  = None
+
+
+def _get_mic_device_index():
+    """
+    Explicitly resolve the microphone input device by name rather than
+    trusting PipeWire's "default" input at record time. WirePlumber's
+    default source has been observed to silently switch to a connected
+    Bluetooth speaker's own (low-quality) mic on reconnect even with the
+    autoswitch-to-headset-profile policy disabled at the system level —
+    this is a code-level second line of defense so a stray default-source
+    change can never route the mic path to a Bluetooth (or any non-USB)
+    device. Input must always be the wired USB microphone; result is
+    cached for the life of the process since the mic isn't hot-swapped
+    mid-session.
+    """
+    global _mic_device_index
+    if _mic_device_index is not None:
+        return _mic_device_index
+    try:
+        devices = sd.query_devices()
+        usb_candidates = [
+            i for i, d in enumerate(devices)
+            if d['max_input_channels'] > 0
+            and 'bluez' not in d['name'].lower()
+            and 'bluetooth' not in d['name'].lower()
+            and 'usb' in d['name'].lower()
+        ]
+        if usb_candidates:
+            _mic_device_index = usb_candidates[0]
+            print(f"[MIC] Using USB input device: {devices[_mic_device_index]['name']}", flush=True)
+        else:
+            non_bt = [
+                i for i, d in enumerate(devices)
+                if d['max_input_channels'] > 0
+                and 'bluez' not in d['name'].lower()
+                and 'bluetooth' not in d['name'].lower()
+            ]
+            _mic_device_index = non_bt[0] if non_bt else None
+            print(f"[MIC WARNING] No USB input device found by name — "
+                  f"falling back to {'device ' + str(_mic_device_index) if _mic_device_index is not None else 'system default'}.",
+                  flush=True)
+    except Exception as e:
+        print(f"[MIC WARNING] Device lookup failed ({e}) — using system default.", flush=True)
+        _mic_device_index = None
+    return _mic_device_index
 
 
 def _get_input_device_rate():
     global _input_device_rate
     if _input_device_rate is None:
         try:
-            _input_device_rate = int(sd.query_devices(kind='input')['default_samplerate'])
+            dev = _get_mic_device_index()
+            info = sd.query_devices(dev, kind='input') if dev is not None else sd.query_devices(kind='input')
+            _input_device_rate = int(info['default_samplerate'])
         except Exception:
             _input_device_rate = 16000
     return _input_device_rate
@@ -340,6 +388,7 @@ def _listen_fixed(source_lang='en', fallback_to_text=True):
             samplerate=native_rate,
             channels=1,
             dtype='int16',
+            device=_get_mic_device_index(),
         )
         sd.wait()
         print("[MIC] Done. Sending to Google Speech API...")
@@ -421,6 +470,7 @@ def _listen_vad(source_lang='en', fallback_to_text=True):
             dtype='int16',
             blocksize=int(native_rate * FRAME_MS / 1000),
             callback=_cb,
+            device=_get_mic_device_index(),
         ):
             while True:
                 try:
